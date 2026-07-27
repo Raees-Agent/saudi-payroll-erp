@@ -754,12 +754,12 @@ elif active_module == "📜 Corporate Invoicing & Billing":
             st.warning("Please register at least one Customer in the 'Client & Customer Directory' tab first.")
         else:
             c_map = {f"{c.customer_name} (VAT: {c.vat_number or 'N/A'})": c.id for c in customers}
-            sel_cust_str = st.selectbox("Select Client / Buyer Name*", list(c_map.keys()))
+            sel_cust_str = st.selectbox("Select Client / Buyer Name*", list(c_map.keys()), key="sb_create_tax_inv_cust")
             sel_cust_id = c_map[sel_cust_str]
             
             c_col1, c_col2 = st.columns(2)
             with c_col1:
-                inv_type = st.selectbox("Invoice Type", ["Tax Invoice", "Simplified Tax Invoice"])
+                inv_type = st.selectbox("Invoice Type", ["Tax Invoice", "Simplified Tax Invoice"], key="sb_create_tax_inv_type")
                 inv_due = st.date_input("Due Date", value=datetime.now() + timedelta(days=30))
             with c_col2:
                 inv_notes = st.text_input("Payment Terms / Notes", value="Payment due within 30 days via bank transfer")
@@ -771,7 +771,7 @@ elif active_module == "📜 Corporate Invoicing & Billing":
             catalog = db.query(CatalogItem).filter(CatalogItem.is_active == 1).all()
             if catalog:
                 cat_map = {f"{cat.item_name} - SAR {cat.unit_price:,.2f}": cat for cat in catalog}
-                sel_cat_str = st.selectbox("Select item from Catalog (optional fast add)", ["-- Custom Line Item --"] + list(cat_map.keys()))
+                sel_cat_str = st.selectbox("Select item from Catalog (optional fast add)", ["-- Custom Line Item --"] + list(cat_map.keys()), key="sb_create_tax_inv_cat")
             else:
                 sel_cat_str = "-- Custom Line Item --"
             
@@ -886,7 +886,7 @@ elif active_module == "📜 Corporate Invoicing & Billing":
         invoices = db.query(Invoice).order_by(Invoice.issue_date.desc()).all()
         if invoices:
             inv_select_map = {f"{i.invoice_number} - {i.status} (SAR {i.total_amount:,.2f})": i.id for i in invoices}
-            sel_inv_str = st.selectbox("Select Invoice to View / Manage", list(inv_select_map.keys()))
+            sel_inv_str = st.selectbox("Select Invoice to View / Manage", list(inv_select_map.keys()), key="sb_inv_mgr_select")
             sel_inv_id = inv_select_map[sel_inv_str]
             
             target_inv = db.query(Invoice).filter(Invoice.id == sel_inv_id).first()
@@ -957,7 +957,7 @@ elif active_module == "📜 Corporate Invoicing & Billing":
         customers = db.query(Customer).filter(Customer.is_active == 1).all()
         if customers:
             soa_cust_map = {f"{c.customer_name} (VAT: {c.vat_number or 'N/A'})": c.id for c in customers}
-            sel_soa_cust = st.selectbox("Select Target Client / Customer*", list(soa_cust_map.keys()))
+            sel_soa_cust = st.selectbox("Select Target Client / Customer*", list(soa_cust_map.keys()), key="sb_soa_cust_select")
             soa_cust_id = soa_cust_map[sel_soa_cust]
             
             s_col1, s_col2 = st.columns(2)
