@@ -691,6 +691,201 @@ elif active_module == "📜 Corporate Invoicing & Billing":
         invoices = db.query(Invoice).order_by(Invoice.issue_date.desc()).all()
         if invoices:
             inv_select_map = {f"{i.invoice_number} - {i.status} (SAR {i.total_amount:,.2f})": i.id for i in invoices}
+    st.markdown("""
+    <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 15px;">
+        <div>
+            <h1 style="margin: 0; color: #ffffff;">📜 Corporate Invoicing & Billing Suite</h1>
+            <p style="color: #8b949e; margin: 0;">Enterprise E-Invoicing & Billing Engine (15% VAT & QR Code Support)</p>
+        </div>
+        <div>
+            <span class="invoice-badge">INVOICING SYSTEM</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    inv_t1, inv_t2, inv_t3, inv_t4, inv_t5, inv_t6 = st.tabs([
+        "📊 Billing Dashboard", 
+        "➕ Create Tax Invoice", 
+        "📄 Invoice Manager & Printable View", 
+        "📑 Statement of Account (SOA)",
+        "👥 Client & Customer Directory", 
+        "📦 Products & Catalog"
+    ])
+
+    # Tab B1: Billing Dashboard
+    with inv_t1:
+        st.subheader("📊 Corporate Billing & Receivables Dashboard")
+        kpis = get_invoicing_kpis(db)
+        
+        ikpi1, ikpi2, ikpi3, ikpi4 = st.columns(4)
+        ikpi1.metric("Total Invoices Issued", f"{kpis['total_invoices_count']} Invoices")
+        ikpi2.metric("Total Billed Revenue", f"SAR {kpis['total_invoiced_sar']:,.2f}")
+        ikpi3.metric("Total Collections", f"SAR {kpis['total_paid_sar']:,.2f}")
+        ikpi4.metric("Outstanding Receivables", f"SAR {kpis['outstanding_receivables_sar']:,.2f}")
+        
+        st.markdown("---")
+        
+        st.markdown("#### 📜 Recent Corporate Invoices")
+        recent_invoices = db.query(Invoice).order_by(Invoice.issue_date.desc()).limit(10).all()
+        if recent_invoices:
+            inv_data = []
+            for i in recent_invoices:
+                cust = db.query(Customer).filter(Customer.id == i.customer_id).first()
+                inv_data.append({
+                    "Invoice #": i.invoice_number,
+                    "Type": i.invoice_type,
+                    "Client": cust.customer_name if cust else "N/A",
+                    "Issue Date": i.issue_date.strftime("%Y-%m-%d") if i.issue_date else "N/A",
+                    "Subtotal": f"SAR {i.subtotal:,.2f}",
+                    "VAT (15%)": f"SAR {i.vat_total:,.2f}",
+                    "TOTAL AMOUNT": f"SAR {i.total_amount:,.2f}",
+                    "Status": i.status
+                })
+            st.dataframe(pd.DataFrame(inv_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("No invoices generated yet. Use 'Create Tax Invoice' tab to issue an invoice.")
+
+    # Tab B2: Create Invoice
+    with inv_t2:
+        st.subheader("➕ Create Tax Invoice (Client, Services, Govt Fee, VAT & Service Charges)")
+        
+        customers = db.query(Customer).filter(Customer.is_active == 1).all()
+        if not customers:
+            st.warning("Please register at least one Customer in the 'Client & Customer Directory' tab first.")
+        else:
+            c_map = {f"{c.customer_name} (VAT: {c.vat_number or 'N/A'})": c.id for c in customers}
+            sel_cust_str = st.selectbox("Select Client / Buyer Name*", list(c_map.keys()))
+            sel_cust_id = c_map[sel_cust_str]
+            
+            c_col1, c_col2 = st.columns(2)
+            with c_col1:
+                inv_type = st.selectbox("Invoice Type", ["Tax Invoice", "Simplified Tax Invoice"])
+                inv_due = st.date_input("Due Date", value=datetime.now() + timedelta(days=30))
+            with c_col2:
+                inv_notes = st.text_input("Payment Terms / Notes", value="Payment due within 30 days via bank transfer")
+
+            st.markdown("---")
+            st.markdown("#### 📦 Add Services & Fee Breakdown Item")
+            
+            # Catalog Item Selector
+            catalog = db.query(CatalogItem).filter(CatalogItem.is_active == 1).all()
+            if catalog:
+                cat_map = {f"{cat.item_name} - SAR {cat.unit_price:,.2f}": cat for cat in catalog}
+                sel_cat_str = st.selectbox("Select item from Catalog (optional fast add)", ["-- Custom Line Item --"] + list(cat_map.keys()))
+            else:
+                sel_cat_str = "-- Custom Line Item --"
+            
+            f_col1, f_col2 = st.columns(2)
+            with f_col1:
+                desc_val = "" if sel_cat_str == "-- Custom Line Item --" else cat_map[sel_cat_str].description or cat_map[sel_cat_str].item_name
+                desc_input = st.text_input("Service / Task Description*", value=desc_val, placeholder="e.g. Iqama Renewal / Commercial License")
+            with f_col2:
+                ben_input = st.text_input("Beneficiary Name / Employee Name", placeholder="e.g. John Doe (Iqama # 2400112233)")
+
+            g_col1, g_col2, g_col3 = st.columns(3)
+            with g_col1:
+                qty_input = st.number_input("Quantity*", min_value=1.0, value=1.0, step=1.0)
+            with g_col2:
+                govt_fee_input = st.number_input("Govt Fee (SAR)", min_value=0.0, value=0.0, step=50.0)
+            with g_col3:
+                price_val = 0.0 if sel_cat_str == "-- Custom Line Item --" else cat_map[sel_cat_str].unit_price
+                service_charge_input = st.number_input("Service Charge (SAR)", min_value=0.0, value=price_val, step=50.0)
+
+            vat_preview = round(service_charge_input * qty_input * 0.15, 2)
+            line_tot_preview = round((govt_fee_input * qty_input) + (service_charge_input * qty_input) + vat_preview, 2)
+            st.caption(f"💡 Line Breakdown: Govt Fee: **SAR {govt_fee_input * qty_input:,.2f}** | Service Charge: **SAR {service_charge_input * qty_input:,.2f}** | VAT (15% on Service Charge): **SAR {vat_preview:,.2f}** ➡️ Total Line: **SAR {line_tot_preview:,.2f}**")
+
+            if st.button("➕ Add Service Line Item", key="btn_add_item"):
+                if desc_input and (govt_fee_input > 0 or service_charge_input > 0):
+                    st.session_state.invoice_items_draft.append({
+                        "description": desc_input,
+                        "beneficiary_name": ben_input,
+                        "quantity": qty_input,
+                        "govt_fee": govt_fee_input,
+                        "service_charge": service_charge_input,
+                        "vat_rate": 0.15
+                    })
+                    st.success(f"Added service line: '{desc_input}' for '{ben_input or 'N/A'}'")
+                    st.rerun()
+                else:
+                    st.error("Please enter a valid Service Description and either a Govt Fee or Service Charge amount.")
+
+            # Draft Line Items Table
+            if st.session_state.invoice_items_draft:
+                st.markdown("##### Current Invoice Draft Line Items:")
+                draft_data = []
+                g_fee_sum = 0.0
+                s_charge_sum = 0.0
+                vat_sum = 0.0
+                for idx, it in enumerate(st.session_state.invoice_items_draft):
+                    q = it['quantity']
+                    g = round(it.get('govt_fee', 0.0) * q, 2)
+                    s = round(it.get('service_charge', 0.0) * q, 2)
+                    v_amt = round(s * 0.15, 2)
+                    tot = round(g + s + v_amt, 2)
+                    g_fee_sum += g
+                    s_charge_sum += s
+                    vat_sum += v_amt
+                    draft_data.append({
+                        "#": idx + 1,
+                        "Service Description": it['description'],
+                        "Beneficiary Name": it.get('beneficiary_name') or "N/A",
+                        "Qty": q,
+                        "Govt Fee (SAR)": f"SAR {g:,.2f}",
+                        "Service Charge (SAR)": f"SAR {s:,.2f}",
+                        "VAT 15% (SAR)": f"SAR {v_amt:,.2f}",
+                        "Line Total (SAR)": f"SAR {tot:,.2f}"
+                    })
+                st.dataframe(pd.DataFrame(draft_data), use_container_width=True, hide_index=True)
+                
+                sub_sum = g_fee_sum + s_charge_sum
+                tot_net_sum = sub_sum + vat_sum
+                
+                st.markdown("##### Invoice Financial Breakdown")
+                sc1, sc2, sc3, sc4 = st.columns(4)
+                sc1.info(f"**Total Govt Fees**: SAR {g_fee_sum:,.2f}")
+                sc2.info(f"**Total Service Charges**: SAR {s_charge_sum:,.2f}")
+                sc3.warning(f"**VAT 15% (on Services)**: SAR {vat_sum:,.2f}")
+                sc4.success(f"**GRAND NET TOTAL**: SAR {tot_net_sum:,.2f}")
+
+                # Live QR Code Preview
+                company = db.query(CompanySettings).first() or CompanySettings()
+                qr_base64 = generate_zatca_qr_base64(
+                    seller_name=company.establishment_name,
+                    vat_number=company.vat_number,
+                    timestamp_str=datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    total_amount=tot_net_sum,
+                    vat_amount=vat_sum
+                )
+                st.caption(f"**Base64 TLV QR Code Hash**: `{qr_base64[:60]}...`")
+
+                btn_col1, btn_col2 = st.columns(2)
+                if btn_col1.button("🚀 Issue Tax Invoice", use_container_width=True):
+                    inv_data = {
+                        "customer_id": sel_cust_id,
+                        "invoice_type": inv_type,
+                        "due_date": datetime.combine(inv_due, datetime.min.time()).isoformat(),
+                        "notes": inv_notes,
+                        "status": "Issued"
+                    }
+                    res = create_invoice(inv_data, st.session_state.invoice_items_draft, db=db)
+                    if res.get("success"):
+                        st.session_state.invoice_items_draft = []
+                        st.success(f"Invoice `{res['invoice_number']}` created successfully!")
+                        st.rerun()
+                    else:
+                        st.error(res.get("error"))
+                        
+                if btn_col2.button("🗑️ Clear Draft Items", use_container_width=True):
+                    st.session_state.invoice_items_draft = []
+                    st.rerun()
+
+    # Tab B3: Invoice Manager & Printable View
+    with inv_t3:
+        st.subheader("📄 Invoice Manager & Printable Tax Invoices")
+        invoices = db.query(Invoice).order_by(Invoice.issue_date.desc()).all()
+        if invoices:
+            inv_select_map = {f"{i.invoice_number} - {i.status} (SAR {i.total_amount:,.2f})": i.id for i in invoices}
             sel_inv_str = st.selectbox("Select Invoice to View / Manage", list(inv_select_map.keys()))
             sel_inv_id = inv_select_map[sel_inv_str]
             
@@ -700,37 +895,26 @@ elif active_module == "📜 Corporate Invoicing & Billing":
             company = db.query(CompanySettings).first() or CompanySettings()
 
             st.markdown("---")
-            # Printable Tax Invoice Template Container
-            st.markdown(f"""
-            <div style="background: #141414; border: 2px solid #e50914; border-radius: 12px; padding: 24px; box-shadow: 0 4px 15px rgba(229, 9, 20, 0.2);">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #e50914; padding-bottom: 15px; margin-bottom: 20px;">
-                    <div>
-                        <h2 style="color: #e50914; margin: 0; font-weight: 800;">{company.establishment_name}</h2>
-                        <p style="color: #a3a3a3; margin: 2px 0;">CR: {company.cr_number} | VAT ID: {company.vat_number}</p>
-                        <p style="color: #a3a3a3; margin: 0;">IBAN: {company.company_iban or 'N/A'}</p>
-                    </div>
-                    <div style="text-align: right;">
-                        <h2 style="color: #ffffff; margin: 0; font-weight: 800;">{target_inv.invoice_type.upper()}</h2>
-                        <p style="color: #ffffff; font-size: 1.1rem; font-weight: bold; margin: 2px 0;">{target_inv.invoice_number}</p>
-                        <p style="color: #a3a3a3; margin: 0;">Status: <b style="color: #e50914;">{target_inv.status}</b></p>
-                    </div>
-                </div>
-                
-                <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
-                    <div style="width: 48%;">
-                        <h4 style="color: #8b949e; margin-bottom: 5px;">CLIENT / BUYER NAME:</h4>
-                        <p style="margin: 0; font-size: 1.05rem;"><b>{cust.customer_name if cust else 'N/A'}</b></p>
-                        <p style="margin: 0; color: #8b949e;">VAT No: {cust.vat_number if cust else 'N/A'}</p>
-                        <p style="margin: 0; color: #8b949e;">Address: {cust.address if cust else 'Riyadh, Saudi Arabia'}</p>
-                    </div>
-                    <div style="width: 48%; text-align: right;">
-                        <h4 style="color: #8b949e; margin-bottom: 5px;">INVOICE DATES:</h4>
-                        <p style="margin: 0; color: #8b949e;">Issue Date: <b>{target_inv.issue_date.strftime('%Y-%m-%d %H:%M') if target_inv.issue_date else 'N/A'}</b></p>
-                        <p style="margin: 0; color: #8b949e;">Due Date: <b>{target_inv.due_date.strftime('%Y-%m-%d') if target_inv.due_date else 'N/A'}</b></p>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            inv_header_c1, inv_header_c2 = st.columns([1.2, 1])
+            with inv_header_c1:
+                st.subheader(company.establishment_name)
+                st.caption(f"CR Number: {company.cr_number} | VAT ID: {company.vat_number}")
+                st.caption(f"IBAN: {company.company_iban or 'N/A'}")
+            with inv_header_c2:
+                st.subheader(target_inv.invoice_type.upper())
+                st.markdown(f"**Invoice #**: `{target_inv.invoice_number}`")
+                st.markdown(f"**Status**: `{target_inv.status}`")
+            
+            st.markdown("---")
+            inv_info_c1, inv_info_c2 = st.columns(2)
+            with inv_info_c1:
+                st.markdown(f"#### 👤 CLIENT / BUYER NAME:\n**{cust.customer_name if cust else 'N/A'}**")
+                st.caption(f"VAT No: {cust.vat_number if cust else 'N/A'} | Address: {cust.address if cust else 'Riyadh, Saudi Arabia'}")
+            with inv_info_c2:
+                st.markdown("#### 📅 INVOICE DATES:")
+                st.markdown(f"Issue Date: **{target_inv.issue_date.strftime('%Y-%m-%d %H:%M') if target_inv.issue_date else 'N/A'}**")
+                st.markdown(f"Due Date: **{target_inv.due_date.strftime('%Y-%m-%d') if target_inv.due_date else 'N/A'}**")
+            st.markdown("---")
 
             st.markdown("#### Itemized Services & Fee Breakdown:")
             st.dataframe(pd.DataFrame([{
@@ -795,30 +979,17 @@ elif active_module == "📜 Corporate Invoicing & Billing":
                 seller_info = soa_res["seller"]
                 
                 st.markdown("---")
-                # Printable Statement of Account Container
-                st.markdown(f"""
-                <div style="background: #141414; border: 2px solid #e50914; border-radius: 12px; padding: 24px; box-shadow: 0 4px 15px rgba(229, 9, 20, 0.2);">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #e50914; padding-bottom: 15px; margin-bottom: 20px;">
-                        <div>
-                            <h2 style="color: #e50914; margin: 0; font-weight: 800;">{seller_info['name']}</h2>
-                            <p style="color: #a3a3a3; margin: 2px 0;">CR: {seller_info['cr_number']} | VAT ID: {seller_info['vat_number']}</p>
-                            <p style="color: #a3a3a3; margin: 0;">IBAN: {seller_info['iban'] or 'N/A'}</p>
-                        </div>
-                        <div style="text-align: right;">
-                            <h2 style="color: #ffffff; margin: 0; font-weight: 800;">STATEMENT OF ACCOUNT</h2>
-                            <p style="color: #a3a3a3; margin: 2px 0;">Statement Date: <b style="color: #ffffff;">{summ['statement_date']}</b></p>
-                        </div>
-                    </div>
-                    
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                        <div>
-                            <h4 style="color: #8b949e; margin-bottom: 5px;">CLIENT / ACCOUNT NAME:</h4>
-                            <p style="margin: 0; font-size: 1.1rem; color: #ffffff;"><b>{cust_info['name']}</b></p>
-                            <p style="margin: 0; color: #a3a3a3;">VAT ID: {cust_info['vat_number'] or 'N/A'} | CR: {cust_info['cr_number'] or 'N/A'}</p>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                soa_head_c1, soa_head_c2 = st.columns([1.2, 1])
+                with soa_head_c1:
+                    st.subheader(seller_info['name'])
+                    st.caption(f"CR Number: {seller_info['cr_number']} | VAT ID: {seller_info['vat_number']}")
+                    st.caption(f"IBAN: {seller_info['iban'] or 'N/A'}")
+                    st.markdown(f"#### 👤 CLIENT / ACCOUNT NAME:\n**{cust_info['name']}**")
+                    st.caption(f"VAT ID: {cust_info['vat_number'] or 'N/A'} | CR: {cust_info['cr_number'] or 'N/A'}")
+                with soa_head_c2:
+                    st.subheader("STATEMENT OF ACCOUNT")
+                    st.markdown(f"Statement Date: **{summ['statement_date']}**")
+                st.markdown("---")
                 
                 st.markdown("##### Statement Financial Summary")
                 m1, m2, m3 = st.columns(3)
