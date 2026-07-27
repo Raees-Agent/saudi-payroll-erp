@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 # Import Backend Models & Compliance Logic
-from database import SessionLocal, Employee, AttendanceRecord, PayrollRecord, CompanySettings, Customer, Invoice, InvoiceItem, CatalogItem
+from database import SessionLocal, engine, Base, Employee, AttendanceRecord, PayrollRecord, CompanySettings, Customer, Invoice, InvoiceItem, CatalogItem
 from payroll import (
     calculate_payroll, process_monthly_payrolls, calculate_gosi_contributions,
     calculate_eosg, generate_sama_wps_sif, get_expiring_documents, calculate_saudization_ratio
@@ -168,8 +168,24 @@ if not st.session_state.authenticated:
                     st.error("Invalid corporate credentials.")
     st.stop()
 
-# Helper DB Session
+# Helper DB Session & Automatic Table Creation
+Base.metadata.create_all(bind=engine)
 db = SessionLocal()
+
+# Ensure default company settings exist in DB
+company_info = db.query(CompanySettings).first()
+if not company_info:
+    company_info = CompanySettings(
+        establishment_name="Saudi Corporate Enterprise",
+        cr_number="1010000000",
+        qiwa_id="7000000000",
+        vat_number="310000000000003",
+        bank_code="RIBL",
+        company_iban="SA0380000000608010167519"
+    )
+    db.add(company_info)
+    db.commit()
+    db.refresh(company_info)
 
 # Sidebar Corporate Header & Module Switcher Segment
 st.sidebar.markdown("""
